@@ -8,21 +8,22 @@ import android.content.BroadcastReceiver;
 import android.bluetooth.BluetoothDevice;
 import android.os.Bundle;
 import android.support.design.widget.FloatingActionButton;
-import android.support.design.widget.Snackbar;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
+import android.widget.AdapterView.OnItemClickListener;
 
 import java.util.ArrayList;
 
 public class MainActivity extends AppCompatActivity {
     protected BluetoothAdapter bluetoothAdapter;
     protected final int REQUEST_ENABLE_BT = 1;
-    protected ArrayList<String> foundDevices = new ArrayList<String>();
+    protected ArrayList<String> foundDevices = new ArrayList<>();
     protected BroadcastReceiver deviceFoundReceiver;
     protected ArrayAdapter<String> devicesAdapter;
     protected ListView devicesListView;
@@ -43,15 +44,22 @@ public class MainActivity extends AppCompatActivity {
         });
 
         //Link array to device list in the UI
-        devicesAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, foundDevices);
+        devicesAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, foundDevices);
         devicesListView = (ListView) findViewById(R.id.devicesList);
         devicesListView.setAdapter(devicesAdapter);
         foundDevices.add("Bluetooth devices found go here when you push the button on the bottom right.");
+        devicesListView.setOnItemClickListener(new OnItemClickListener() {
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                String item = (String) parent.getItemAtPosition(position);
+                //Do something here
+            }
+        });
 
         //Bluetooth setting up
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (bluetoothAdapter == null) {
             // Device does not support Bluetooth, quit???
+            throw new UnsupportedOperationException();
         }
 
         //Make sure bluetooth is on
@@ -83,6 +91,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        super.onDestroy();
         unregisterReceiver(deviceFoundReceiver);
     }
 
@@ -117,11 +126,10 @@ public class MainActivity extends AppCompatActivity {
 
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_ENABLE_BT) {
-            if (resultCode == RESULT_OK) {
-                //Bluetooth is now on
-            } else {
+            if (resultCode != RESULT_OK) {
                 //Bluetooth was not enabled, we should quit or re-ask for Bluetooth
                 //Not sure what to put here yet :)
+                throw new UnsupportedOperationException();
             }
         }
     }
