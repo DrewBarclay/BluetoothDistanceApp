@@ -1,6 +1,8 @@
 package g20capstone.bluetoothdistanceapp;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothServerSocket;
+import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -18,15 +20,20 @@ import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.AdapterView.OnItemClickListener;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
     protected BluetoothAdapter bluetoothAdapter;
     protected final int REQUEST_ENABLE_BT = 1;
-    protected ArrayList<String> foundDevices = new ArrayList<>();
+    protected ArrayList<BluetoothDevice> foundDevices = new ArrayList<>();
     protected BroadcastReceiver deviceFoundReceiver;
-    protected ArrayAdapter<String> devicesAdapter;
+    protected ArrayAdapter<BluetoothDevice> devicesAdapter;
     protected ListView devicesListView;
+    protected UUID bluetoothUUID = UUID.fromString("23275a50-891c-11e6-bdf4-0800200c9a66");
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -47,11 +54,10 @@ public class MainActivity extends AppCompatActivity {
         devicesAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, foundDevices);
         devicesListView = (ListView) findViewById(R.id.devicesList);
         devicesListView.setAdapter(devicesAdapter);
-        foundDevices.add("Bluetooth devices found go here when you push the button on the bottom right.");
         devicesListView.setOnItemClickListener(new OnItemClickListener() {
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                String item = (String) parent.getItemAtPosition(position);
-                //Do something here
+                BluetoothDevice device = (BluetoothDevice) parent.getItemAtPosition(position);
+                new ConnectThread(bluetoothAdapter, device, bluetoothUUID).start();
             }
         });
 
@@ -81,12 +87,15 @@ public class MainActivity extends AppCompatActivity {
                 // Get the BluetoothDevice object from the Intent
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 // Add the name and address to an array adapter to show in a ListView
-                foundDevices.add(device.getName() + " " + device.getAddress());
+                foundDevices.add(device);
                 devicesAdapter.notifyDataSetChanged();
             }
         };
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
         registerReceiver(deviceFoundReceiver, filter); // Don't forget to unregister during onDestroy
+
+        //Set up server for requests
+        new AcceptThread(bluetoothAdapter, bluetoothUUID).start();
     }
 
     @Override
@@ -134,3 +143,131 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 }
+
+class AcceptThread extends Thread {
+    private BluetoothServerSocket serverSocket;
+    protected BluetoothAdapter bluetoothAdapter;
+
+    public AcceptThread(BluetoothAdapter bluetoothAdapter, UUID uuid) {
+        this.bluetoothAdapter = bluetoothAdapter;
+        try {
+            serverSocket = bluetoothAdapter.listenUsingRfcommWithServiceRecord("BluetoothDistanceApp", uuid);
+        } catch (IOException e) { throw new UnsupportedOperationException(); }
+    }
+
+    public void run() {
+        BluetoothSocket socket = null;
+        // Keep listening until exception occurs or a socket is returned
+        while (true) {
+            try {
+                socket = serverSocket.accept();
+            } catch (IOException e) {
+                break;
+            }
+            // If a connection was accepted
+            if (socket != null) {
+                // Do work to manage the connection (in a separate thread)
+                manageConnectedSocket(socket);
+                try {
+                    serverSocket.close();
+                } catch (IOException e) {
+
+                }
+                break;
+            }
+        }
+    }
+
+    private void manageConnectedSocket(BluetoothSocket socket) {
+        byte[] buffer = new byte[1024];
+        try {
+            InputStream is = socket.getInputStream();
+            OutputStream os = socket.getOutputStream();
+            while(true) {
+                System.out.println("Sending data 20");
+                buffer[0] = 20;
+                os.write(buffer, 0, 1);
+                int bytes = is.read(buffer);
+                System.out.println("Received data length " + bytes + " first byte is " + buffer[0]);
+            }
+        } catch (IOException e) {
+
+        }
+    }
+
+    /** Will cancel the listening socket, and cause the thread to finish */
+    public void cancel() {
+        try {
+            serverSocket.close();
+        } catch (IOException e) { }
+    }
+}
+
+class ConnectThread extends Thread {
+    protected BluetoothAdapter bluetoothAdapter;
+    private BluetoothSocket socket;
+    private BluetoothDevice device;
+
+    public ConnectThread(BluetoothAdapter bluetoothAdapter, BluetoothDevice device, UUID uuid) {
+        // Use a temporary object that is later assigned to mmSocket,
+        // because mmSocket is final
+        this.device = device;
+        this.bluetoothAdapter = bluetoothAdapter;
+
+        // Get a BluetoothSocket to connect with the given BluetoothDevice
+        try {
+            // MY_UUID is the app's UUID string, also used by the server code
+            socket = device.createRfcommSocketToServiceRecord(uuid);
+        } catch (IOException e) { }
+    }
+
+    public void run() {
+        // Cancel discovery because it will slow down the connection
+        bluetoothAdapter.cancelDiscovery();
+
+        try {
+            // Connect the device through the socket. This will block
+            // until it succeeds or throws an exception
+            socket.connect();
+        } catch (IOException connectException) {
+            // Unable to connect; close the socket and get out
+            try {
+                socket.close();
+            } catch (IOException closeException) { }
+            return;
+        }
+
+        // Do work to manage the connection (in a separate thread)
+        manageConnectedSocket(socket);
+        try {
+            socket.close();
+        } catch (IOException e) {
+
+        }
+    }
+
+    private void manageConnectedSocket(BluetoothSocket socket) {
+        byte[] buffer = new byte[1024];
+        try {
+            InputStream is = socket.getInputStream();
+            OutputStream os = socket.getOutputStream();
+            while(true) {
+                int bytes = is.read(buffer);
+                System.out.println("Received data length" + bytes + " first byte is " + buffer[0]);
+                System.out.println("Sending data 10");
+                buffer[0] = 10;
+                os.write(buffer, 0, 1);
+            }
+        } catch (IOException e) {
+
+        }
+    }
+
+    /** Will cancel an in-progress connection, and close the socket */
+    public void cancel() {
+        try {
+            socket.close();
+        } catch (IOException e) { }
+    }
+}
+
