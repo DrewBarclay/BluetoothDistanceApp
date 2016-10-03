@@ -9,6 +9,7 @@ import android.content.IntentFilter;
 import android.content.BroadcastReceiver;
 import android.bluetooth.BluetoothDevice;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.support.design.widget.FloatingActionButton;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
@@ -57,7 +58,9 @@ public class MainActivity extends AppCompatActivity {
         devicesListView.setOnItemClickListener(new OnItemClickListener() {
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 BluetoothDevice device = (BluetoothDevice) parent.getItemAtPosition(position);
-                new ConnectThread(bluetoothAdapter, device, bluetoothUUID).start();
+                ConnectThread clientThread = new ConnectThread(bluetoothAdapter, device, bluetoothUUID);
+                clientThread.setPriority(Thread.MAX_PRIORITY);
+                clientThread.start();
             }
         });
 
@@ -95,7 +98,9 @@ public class MainActivity extends AppCompatActivity {
         registerReceiver(deviceFoundReceiver, filter); // Don't forget to unregister during onDestroy
 
         //Set up server for requests
-        new AcceptThread(bluetoothAdapter, bluetoothUUID).start();
+        AcceptThread serverThread = new AcceptThread(bluetoothAdapter, bluetoothUUID);
+        serverThread.setPriority(Thread.MAX_PRIORITY);
+        serverThread.start();
     }
 
     @Override
@@ -158,6 +163,8 @@ class AcceptThread extends Thread {
     public void run() {
         BluetoothSocket socket = null;
         // Keep listening until exception occurs or a socket is returned
+        bluetoothAdapter.cancelDiscovery();
+
         while (true) {
             try {
                 socket = serverSocket.accept();
@@ -179,16 +186,15 @@ class AcceptThread extends Thread {
     }
 
     private void manageConnectedSocket(BluetoothSocket socket) {
-        byte[] buffer = new byte[1024];
+        byte[] buffer = new byte[1];
         try {
             InputStream is = socket.getInputStream();
             OutputStream os = socket.getOutputStream();
             while(true) {
-                System.out.println("Sending data 20");
-                buffer[0] = 20;
-                os.write(buffer, 0, 1);
+                //Server is 'dumb' and just echoes a single byte response back.
                 int bytes = is.read(buffer);
-                System.out.println("Received data length " + bytes + " first byte is " + buffer[0]);
+                os.write(buffer);
+                os.flush(); //Flush to ensure speediest sending
             }
         } catch (IOException e) {
 
@@ -216,7 +222,6 @@ class ConnectThread extends Thread {
 
         // Get a BluetoothSocket to connect with the given BluetoothDevice
         try {
-            // MY_UUID is the app's UUID string, also used by the server code
             socket = device.createRfcommSocketToServiceRecord(uuid);
         } catch (IOException e) { }
     }
@@ -237,7 +242,7 @@ class ConnectThread extends Thread {
             return;
         }
 
-        // Do work to manage the connection (in a separate thread)
+        // Do work to manage the connection
         manageConnectedSocket(socket);
         try {
             socket.close();
@@ -247,16 +252,18 @@ class ConnectThread extends Thread {
     }
 
     private void manageConnectedSocket(BluetoothSocket socket) {
-        byte[] buffer = new byte[1024];
+        byte[] buffer = new byte[1];
         try {
             InputStream is = socket.getInputStream();
             OutputStream os = socket.getOutputStream();
+            //Measure response times in an infinite loop
             while(true) {
+                os.write(buffer);
+                long startTime = System.nanoTime();
+                os.flush();
                 int bytes = is.read(buffer);
-                System.out.println("Received data length" + bytes + " first byte is " + buffer[0]);
-                System.out.println("Sending data 10");
-                buffer[0] = 10;
-                os.write(buffer, 0, 1);
+                long endTime = System.nanoTime();
+                System.out.println("Ping complete. Nanoseconds: " + (endTime - startTime));
             }
         } catch (IOException e) {
 
