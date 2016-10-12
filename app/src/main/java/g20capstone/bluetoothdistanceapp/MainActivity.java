@@ -1,38 +1,28 @@
 package g20capstone.bluetoothdistanceapp;
 
+import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothServerSocket;
-import android.bluetooth.BluetoothSocket;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothManager;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.BroadcastReceiver;
-import android.bluetooth.BluetoothDevice;
 import android.os.Bundle;
-import android.os.SystemClock;
 import android.support.design.widget.FloatingActionButton;
+import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
-import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.widget.AdapterView;
+import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
-import android.widget.AdapterView.OnItemClickListener;
-import android.widget.TextView;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
     protected BluetoothAdapter bluetoothAdapter;
     protected final int REQUEST_ENABLE_BT = 1;
-    protected ArrayList<BluetoothDevice> foundDevices = new ArrayList<>();
-    protected ArrayAdapter<BluetoothDevice> devicesAdapter;
+    protected ArrayAdapter<BluetoothDeviceInfo> devicesAdapter;
     protected ListView devicesListView;
     protected UUID bluetoothUUID = UUID.fromString("23275a50-891c-11e6-bdf4-0800200c9a66");
 
@@ -53,20 +43,13 @@ public class MainActivity extends AppCompatActivity {
         });
 
         //Link array to device list in the UI
-        devicesAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, foundDevices);
+        devicesAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, BluetoothDeviceInfo.deviceList);
         devicesListView = (ListView) findViewById(R.id.devicesList);
         devicesListView.setAdapter(devicesAdapter);
-        devicesListView.setOnItemClickListener(new OnItemClickListener() {
-            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                BluetoothDevice device = (BluetoothDevice) parent.getItemAtPosition(position);
-                ConnectThread clientThread = new ConnectThread(bluetoothAdapter, device, bluetoothUUID);
-                clientThread.setPriority(Thread.MAX_PRIORITY);
-                clientThread.start();
-            }
-        });
 
         //Bluetooth setting up
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        final BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+        bluetoothAdapter = bluetoothManager.getAdapter();
         if (bluetoothAdapter == null) {
             // Device does not support Bluetooth, quit???
             throw new UnsupportedOperationException();
@@ -85,44 +68,29 @@ public class MainActivity extends AppCompatActivity {
             startActivity(discoverableIntent);
         }
 
-        //Register hook for found devices
-        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-        registerReceiver(deviceFoundReceiver, filter); // Don't forget to unregister during onDestroy
-
-        //Set up server for requests
-        AcceptThread serverThread = new AcceptThread(bluetoothAdapter, bluetoothUUID);
-        serverThread.setPriority(Thread.MAX_PRIORITY);
-        serverThread.start();
-
-        scanForBluetoothDevices();
+        ActivityCompat.requestPermissions(this,new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
     }
 
-    protected BroadcastReceiver deviceFoundReceiver = new BroadcastReceiver() {
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            // When discovery finds a device
-            // Get the BluetoothDevice object from the Intent
-            BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-            int rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI,Short.MIN_VALUE);
+    protected BluetoothAdapter.LeScanCallback scanCallback = new BluetoothAdapter.LeScanCallback() {
+        @Override
+        public void onLeScan(final BluetoothDevice device, int rssi, byte[] scanRecord) {
             // Add the name and address to an array adapter to show in a ListView
-            foundDevices.add(device);
+            BluetoothDeviceInfo bdi = BluetoothDeviceInfo.getInfo(device);
+            bdi.setScanRecord(scanRecord);
+            bdi.addRssi(rssi);
             devicesAdapter.notifyDataSetChanged();
-            TextView txt = (TextView) findViewById(R.id.outputText);
-            txt.setText(device.getName() + " RSSI: " + rssi);
         }
     };
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        unregisterReceiver(deviceFoundReceiver);
+        bluetoothAdapter.stopLeScan(scanCallback);
     }
 
     protected void scanForBluetoothDevices() {
-        foundDevices.clear();
-        devicesAdapter.notifyDataSetChanged();
-        bluetoothAdapter.cancelDiscovery();
-        bluetoothAdapter.startDiscovery();
+        bluetoothAdapter.stopLeScan(scanCallback);
+        bluetoothAdapter.startLeScan(scanCallback);
     }
 
     @Override
@@ -155,136 +123,6 @@ public class MainActivity extends AppCompatActivity {
                 throw new UnsupportedOperationException();
             }
         }
-    }
-}
-
-class AcceptThread extends Thread {
-    private BluetoothServerSocket serverSocket;
-    protected BluetoothAdapter bluetoothAdapter;
-
-    public AcceptThread(BluetoothAdapter bluetoothAdapter, UUID uuid) {
-        this.bluetoothAdapter = bluetoothAdapter;
-        try {
-            serverSocket = bluetoothAdapter.listenUsingRfcommWithServiceRecord("BluetoothDistanceApp", uuid);
-        } catch (IOException e) { throw new UnsupportedOperationException(); }
-    }
-
-    public void run() {
-        BluetoothSocket socket = null;
-        // Keep listening until exception occurs or a socket is returned
-        bluetoothAdapter.cancelDiscovery();
-
-        while (true) {
-            try {
-                socket = serverSocket.accept();
-            } catch (IOException e) {
-                break;
-            }
-            // If a connection was accepted
-            if (socket != null) {
-                // Do work to manage the connection (in a separate thread)
-                manageConnectedSocket(socket);
-                try {
-                    serverSocket.close();
-                } catch (IOException e) {
-
-                }
-                break;
-            }
-        }
-    }
-
-    private void manageConnectedSocket(BluetoothSocket socket) {
-        byte[] buffer = new byte[1];
-        try {
-            InputStream is = socket.getInputStream();
-            OutputStream os = socket.getOutputStream();
-            while(true) {
-                //Server is 'dumb' and just echoes a single byte response back.
-                int bytes = is.read(buffer);
-                os.write(buffer);
-                os.flush(); //Flush to ensure speediest sending
-            }
-        } catch (IOException e) {
-
-        }
-    }
-
-    /** Will cancel the listening socket, and cause the thread to finish */
-    public void cancel() {
-        try {
-            serverSocket.close();
-        } catch (IOException e) { }
-    }
-}
-
-class ConnectThread extends Thread {
-    protected BluetoothAdapter bluetoothAdapter;
-    private BluetoothSocket socket;
-    private BluetoothDevice device;
-
-    public ConnectThread(BluetoothAdapter bluetoothAdapter, BluetoothDevice device, UUID uuid) {
-        // Use a temporary object that is later assigned to mmSocket,
-        // because mmSocket is final
-        this.device = device;
-        this.bluetoothAdapter = bluetoothAdapter;
-
-        // Get a BluetoothSocket to connect with the given BluetoothDevice
-        try {
-            socket = device.createRfcommSocketToServiceRecord(uuid);
-        } catch (IOException e) { }
-    }
-
-    public void run() {
-        // Cancel discovery because it will slow down the connection
-        bluetoothAdapter.cancelDiscovery();
-
-        try {
-            // Connect the device through the socket. This will block
-            // until it succeeds or throws an exception
-            socket.connect();
-        } catch (IOException connectException) {
-            // Unable to connect; close the socket and get out
-            try {
-                socket.close();
-            } catch (IOException closeException) { }
-            return;
-        }
-
-        // Do work to manage the connection
-        manageConnectedSocket(socket);
-        try {
-            socket.close();
-        } catch (IOException e) {
-
-        }
-    }
-
-    private void manageConnectedSocket(BluetoothSocket socket) {
-        byte[] buffer = new byte[1];
-        try {
-            InputStream is = socket.getInputStream();
-            OutputStream os = socket.getOutputStream();
-            //Measure response times in an infinite loop
-            while(true) {
-                os.write(buffer);
-                long startTime = System.nanoTime();
-                os.flush();
-                int bytes = is.read(buffer);
-                long endTime = System.nanoTime();
-                System.out.println("Ping complete. Nanoseconds: " + (endTime - startTime));
-                SystemClock.sleep(100);
-            }
-        } catch (IOException e) {
-
-        }
-    }
-
-    /** Will cancel an in-progress connection, and close the socket */
-    public void cancel() {
-        try {
-            socket.close();
-        } catch (IOException e) { }
     }
 }
 
