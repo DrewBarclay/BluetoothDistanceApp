@@ -20,6 +20,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.AdapterView.OnItemClickListener;
+import android.widget.TextView;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,7 +32,6 @@ public class MainActivity extends AppCompatActivity {
     protected BluetoothAdapter bluetoothAdapter;
     protected final int REQUEST_ENABLE_BT = 1;
     protected ArrayList<BluetoothDevice> foundDevices = new ArrayList<>();
-    protected BroadcastReceiver deviceFoundReceiver;
     protected ArrayAdapter<BluetoothDevice> devicesAdapter;
     protected ListView devicesListView;
     protected UUID bluetoothUUID = UUID.fromString("23275a50-891c-11e6-bdf4-0800200c9a66");
@@ -47,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                System.out.println("Button pressed");
                 scanForBluetoothDevices();
             }
         });
@@ -78,22 +79,13 @@ public class MainActivity extends AppCompatActivity {
         }
 
         //Make sure this device is discoverable
-        Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-        discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 0); //forever
-        startActivity(discoverableIntent);
+        if (bluetoothAdapter.getScanMode() != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE) {
+            Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
+            discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 0); //forever
+            startActivity(discoverableIntent);
+        }
 
         //Register hook for found devices
-        deviceFoundReceiver = new BroadcastReceiver() {
-            public void onReceive(Context context, Intent intent) {
-                String action = intent.getAction();
-                // When discovery finds a device
-                // Get the BluetoothDevice object from the Intent
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                // Add the name and address to an array adapter to show in a ListView
-                foundDevices.add(device);
-                devicesAdapter.notifyDataSetChanged();
-            }
-        };
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
         registerReceiver(deviceFoundReceiver, filter); // Don't forget to unregister during onDestroy
 
@@ -101,7 +93,24 @@ public class MainActivity extends AppCompatActivity {
         AcceptThread serverThread = new AcceptThread(bluetoothAdapter, bluetoothUUID);
         serverThread.setPriority(Thread.MAX_PRIORITY);
         serverThread.start();
+
+        scanForBluetoothDevices();
     }
+
+    protected BroadcastReceiver deviceFoundReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            // When discovery finds a device
+            // Get the BluetoothDevice object from the Intent
+            BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+            int rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI,Short.MIN_VALUE);
+            // Add the name and address to an array adapter to show in a ListView
+            foundDevices.add(device);
+            devicesAdapter.notifyDataSetChanged();
+            TextView txt = (TextView) findViewById(R.id.outputText);
+            txt.setText(device.getName() + " RSSI: " + rssi);
+        }
+    };
 
     @Override
     protected void onDestroy() {
@@ -264,6 +273,7 @@ class ConnectThread extends Thread {
                 int bytes = is.read(buffer);
                 long endTime = System.nanoTime();
                 System.out.println("Ping complete. Nanoseconds: " + (endTime - startTime));
+                SystemClock.sleep(100);
             }
         } catch (IOException e) {
 
